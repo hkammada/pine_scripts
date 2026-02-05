@@ -2,27 +2,37 @@
 indicator("3 EMA + GANN + CPR + Pivot (Historical)", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // ==========================================
-// --- INPUTS ---
+// --- INPUTS (Group Master Selectors) ---
 // ==========================================
+
+// --- EMA GROUP ---
 grp_ema = "EMA Settings"
-len1 = input.int(5, "EMA 1 Length", minval=1, group=grp_ema)
-col1 = input.color(color.new(color.blue, 0), "EMA 1 Color", group=grp_ema)
-len2 = input.int(13, "EMA 2 Length", minval=1, group=grp_ema)
-col2 = input.color(color.new(color.orange, 0), "EMA 2 Color", group=grp_ema)
-len3 = input.int(39, "EMA 3 Length", minval=1, group=grp_ema)
-col3 = input.color(color.new(color.red, 0), "EMA 3 Color", group=grp_ema)
+enableEMA = input.bool(true, "MASTER: Enable EMA Group", group=grp_ema)
+len1 = input.int(5, "EMA 1 Length", minval=1, group=grp_ema, active=enableEMA)
+col1 = input.color(color.new(color.blue, 0), "EMA 1 Color", group=grp_ema, active=enableEMA)
+len2 = input.int(13, "EMA 2 Length", minval=1, group=grp_ema, active=enableEMA)
+col2 = input.color(color.new(color.orange, 0), "EMA 2 Color", group=grp_ema, active=enableEMA)
+len3 = input.int(39, "EMA 3 Length", minval=1, group=grp_ema, active=enableEMA)
+col3 = input.color(color.new(color.red, 0), "EMA 3 Color", group=grp_ema, active=enableEMA)
 
+// --- CPR GROUP ---
 grp_cpr = "CPR & Pivot Settings"
-showCPR    = input.bool(true, "Show CPR (TC, BC, Pivot)", group=grp_cpr)
-pivotColor = input.color(color.new(color.black, 0), "Pivot Color", group=grp_cpr)
-cprColor   = input.color(color.new(color.purple, 0), "TC/BC Color", group=grp_cpr)
+enableCPR  = input.bool(true, "MASTER: Enable CPR Group", group=grp_cpr)
+pivotColor = input.color(color.new(color.black, 0), "Pivot Color", group=grp_cpr, active=enableCPR)
+cprColor   = input.color(color.new(color.purple, 0), "TC/BC Color", group=grp_cpr, active=enableCPR)
 
+// --- GANN GROUP ---
 grp_gann = "Gann Settings"
-multiplier = input.float(1.0, "Multiplier", minval=0.0001, group=grp_gann, tooltip="100 for Stocks, 10000 for Forex")
-use_prev_close = input.bool(false, "Use Yesterday's Close as Base?", group=grp_gann)
-up_color = input.color(color.new(color.teal, 0), "Resistance Color", group=grp_gann)
-down_color = input.color(color.new(color.maroon, 0), "Support Color", group=grp_gann)
-show_labels = input.bool(true, "Show Labels", group=grp_gann)
+enableGann = input.bool(true, "MASTER: Enable Gann Group", group=grp_gann)
+multiplier = input.float(1.0, "Multiplier", minval=0.0001, group=grp_gann, active=enableGann)
+use_prev_close = input.bool(false, "Use Yesterday's Close?", group=grp_gann, active=enableGann)
+up_color = input.color(color.new(color.teal, 0), "Resistance Color", group=grp_gann, active=enableGann)
+down_color = input.color(color.new(color.maroon, 0), "Support Color", group=grp_gann, active=enableGann)
+show_labels = input.bool(true, "Show Labels", group=grp_gann, active=enableGann)
+
+// --- SIGNALS GROUP ---
+grp_sig = "Signal Settings"
+enableSignals = input.bool(true, "MASTER: Enable Buy/Sell Signals", group=grp_sig)
 
 // ==========================================
 // --- CALCULATIONS ---
@@ -31,23 +41,18 @@ ema1 = ta.ema(close, len1)
 ema2 = ta.ema(close, len2)
 ema3 = ta.ema(close, len3)
 
-// Detect New Day
 is_new_day = ta.change(time("D")) != 0
-
-// Fetch Daily Data (Yesterday's HLC)
 dHigh  = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
 dLow   = request.security(syminfo.tickerid, "D", low[1], lookahead = barmerge.lookahead_on)
 dClose = request.security(syminfo.tickerid, "D", close[1], lookahead = barmerge.lookahead_on)
 
-// CPR Formula
 pivotPoint = (dHigh + dLow + dClose) / 3
 bc = (dHigh + dLow) / 2
 tc = (pivotPoint - bc) + pivotPoint
 
-// Gann Base Price Logic
 var float gann_base = na
 if is_new_day
-    gann_base := use_prev_close ? close[1] : open
+    gann_base := use_prev_close ? dClose : open
 
 calc_gann(float base, float angle, bool is_up) =>
     float root = math.sqrt(base * multiplier)
@@ -56,12 +61,11 @@ calc_gann(float base, float angle, bool is_up) =>
     res / multiplier
 
 // ==========================================
-// --- DRAWING MANAGEMENT ---
+// --- DRAWING LOGIC (Group Conditionals) ---
 // ==========================================
 var line[]  current_day_lines  = array.new_line()
 var label[] current_day_labels = array.new_label()
 
-// Helper to create lines that grow bar-by-bar
 add_level(float price, color col, string txt, int wid, string style_type) =>
     if not na(price)
         line_style = style_type == "Solid" ? line.style_solid : line.style_dashed
@@ -71,41 +75,42 @@ add_level(float price, color col, string txt, int wid, string style_type) =>
             label lb = label.new(bar_index, price, txt, color=color.new(col, 100), textcolor=col, style=label.style_label_left, size=size.small)
             array.push(current_day_labels, lb)
 
-// --- EXECUTION ON NEW DAY ---
 if is_new_day
-    // Lock previous day's drawings by clearing tracking arrays
     array.clear(current_day_lines)
     array.clear(current_day_labels)
 
-    // Draw CPR Levels
-    if showCPR
+    // Master Switch Check for CPR
+    if enableCPR
         add_level(pivotPoint, pivotColor, "P", 2, "Solid")
         add_level(tc, cprColor, "TC", 1, "Solid")
         add_level(bc, cprColor, "BC", 1, "Solid")
 
-    // Draw Gann Levels
-    float[] angles = array.from(45.0, 90.0, 180.0, 270.0, 360.0)
-    for angle in angles
-        add_level(calc_gann(gann_base, angle, true), up_color, str.tostring(angle) + "° R", 1, "Dashed")
-        add_level(calc_gann(gann_base, angle, false), down_color, str.tostring(angle) + "° S", 1, "Dashed")
+    // Master Switch Check for Gann
+    if enableGann
+        float[] angles = array.from(45.0, 90.0, 180.0, 270.0, 360.0)
+        for angle in angles
+            add_level(calc_gann(gann_base, angle, true), up_color, str.tostring(angle) + "° R", 1, "Dashed")
+            add_level(calc_gann(gann_base, angle, false), down_color, str.tostring(angle) + "° S", 1, "Dashed")
 
-// --- ON EVERY BAR ---
-// Update end point for TODAY'S lines only
 if array.size(current_day_lines) > 0
     for i = 0 to array.size(current_day_lines) - 1
         line.set_x2(array.get(current_day_lines, i), bar_index)
-        if show_labels and i < array.size(current_day_labels)
+        if array.size(current_day_labels) > i
             label.set_x(array.get(current_day_labels, i), bar_index)
 
 // ==========================================
 // --- PLOTS & SIGNALS ---
 // ==========================================
-plot(ema1, "EMA 1", color=col1, linewidth=2)
-plot(ema2, "EMA 2", color=col2, linewidth=2)
-plot(ema3, "EMA 3", color=col3, linewidth=2)
 
-if ta.crossover(ema1, ema3)
-    label.new(bar_index, low, "BUY", color=color.green, textcolor=color.white, style=label.style_label_up)
+// EMAs plot only if Master EMA switch is ON
+plot(enableEMA ? ema1 : na, "EMA 1", color=col1, linewidth=2)
+plot(enableEMA ? ema2 : na, "EMA 2", color=col2, linewidth=2)
+plot(enableEMA ? ema3 : na, "EMA 3", color=col3, linewidth=2)
 
-if ta.crossunder(ema1, ema3)
-    label.new(bar_index, high, "SELL", color=color.red, textcolor=color.white, style=label.style_label_down)
+// Signals plot only if Master Signal switch is ON
+if enableSignals
+    if ta.crossover(ema1, ema3)
+        label.new(bar_index, low, "BUY", color=color.green, textcolor=color.white, style=label.style_label_up)
+
+    if ta.crossunder(ema1, ema3)
+        label.new(bar_index, high, "SELL", color=color.red, textcolor=color.white, style=label.style_label_down)
