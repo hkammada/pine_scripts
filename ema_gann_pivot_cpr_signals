@@ -1,5 +1,5 @@
 //@version=6
-indicator("3 EMA + GANN + CPR + Pivot (Historical)", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("3 EMA + GANN + CPR + Pivot + Stoch RSI Filter", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // ==========================================
 // --- INPUTS (Group Master Selectors) ---
@@ -30,6 +30,13 @@ up_color = input.color(color.new(color.teal, 0), "Resistance Color", group=grp_g
 down_color = input.color(color.new(color.maroon, 0), "Support Color", group=grp_gann, active=enableGann)
 show_labels = input.bool(true, "Show Labels", group=grp_gann, active=enableGann)
 
+// --- STOCHASTIC RSI GROUP ---
+grp_stoch = "Stochastic RSI Settings"
+smoothK = input.int(3, "K Smoothing", minval=1, group=grp_stoch)
+smoothD = input.int(3, "D Smoothing", minval=1, group=grp_stoch)
+lengthRSI = input.int(14, "RSI Length", minval=1, group=grp_stoch)
+lengthStoch = input.int(14, "Stochastic Length", minval=1, group=grp_stoch)
+
 // --- SIGNALS GROUP ---
 grp_sig = "Signal Settings"
 enableSignals = input.bool(true, "MASTER: Enable Buy/Sell Signals", group=grp_sig)
@@ -37,10 +44,18 @@ enableSignals = input.bool(true, "MASTER: Enable Buy/Sell Signals", group=grp_si
 // ==========================================
 // --- CALCULATIONS ---
 // ==========================================
+
+// EMA Calculations
 ema1 = ta.ema(close, len1)
 ema2 = ta.ema(close, len2)
 ema3 = ta.ema(close, len3)
 
+// Stochastic RSI Calculation
+rsi1 = ta.rsi(close, lengthRSI)
+k = ta.sma(ta.stoch(rsi1, rsi1, rsi1, lengthStoch), smoothK)
+d = ta.sma(k, smoothD)
+
+// CPR & Pivot Calculations
 is_new_day = ta.change(time("D")) != 0
 dHigh  = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
 dLow   = request.security(syminfo.tickerid, "D", low[1], lookahead = barmerge.lookahead_on)
@@ -50,6 +65,7 @@ pivotPoint = (dHigh + dLow + dClose) / 3
 bc = (dHigh + dLow) / 2
 tc = (pivotPoint - bc) + pivotPoint
 
+// Gann Calculations
 var float gann_base = na
 if is_new_day
     gann_base := use_prev_close ? dClose : open
@@ -79,13 +95,11 @@ if is_new_day
     array.clear(current_day_lines)
     array.clear(current_day_labels)
 
-    // Master Switch Check for CPR
     if enableCPR
         add_level(pivotPoint, pivotColor, "P", 2, "Solid")
         add_level(tc, cprColor, "TC", 1, "Solid")
         add_level(bc, cprColor, "BC", 1, "Solid")
 
-    // Master Switch Check for Gann
     if enableGann
         float[] angles = array.from(45.0, 90.0, 180.0, 270.0, 360.0)
         for angle in angles
@@ -102,15 +116,27 @@ if array.size(current_day_lines) > 0
 // --- PLOTS & SIGNALS ---
 // ==========================================
 
-// EMAs plot only if Master EMA switch is ON
+// EMAs plot
 plot(enableEMA ? ema1 : na, "EMA 1", color=col1, linewidth=2)
 plot(enableEMA ? ema2 : na, "EMA 2", color=col2, linewidth=2)
 plot(enableEMA ? ema3 : na, "EMA 3", color=col3, linewidth=2)
 
-// Signals plot only if Master Signal switch is ON
+// Signals Logic
 if enableSignals
-    if ta.crossover(ema1, ema3)
+    // --- BUY SIGNAL ---
+    // Condition: EMA Crossover + Stoch RSI between 0-50 + Upward direction
+    buyStochInRange = k >= 0 and k <= 50
+    buyStochUpward  = k > k[1]
+    emaBuyCondition = ta.crossover(ema1, ema3)
+    
+    if emaBuyCondition and buyStochInRange and buyStochUpward
         label.new(bar_index, low, "BUY", color=color.green, textcolor=color.white, style=label.style_label_up)
 
-    if ta.crossunder(ema1, ema3)
+    // --- SELL SIGNAL ---
+    // Condition: EMA Crossunder + Stoch RSI between 50-100 + Downward direction
+    sellStochInRange = k >= 50 and k <= 100
+    sellStochDownward = k < k[1]
+    emaSellCondition = ta.crossunder(ema1, ema3)
+
+    if emaSellCondition and sellStochInRange and sellStochDownward
         label.new(bar_index, high, "SELL", color=color.red, textcolor=color.white, style=label.style_label_down)
